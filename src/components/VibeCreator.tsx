@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,9 @@ import {
 import spotifyService, { SpotifyTrack } from "../services/spotifyService";
 import { useReactMediaRecorder } from "react-media-recorder";
 import Webcam from "react-webcam";
+import { vibeService } from "../services/vibeService";
+import { useAuth } from "../contexts/AuthContext";
+import { supabase } from "../services/supabaseClient";
 
 interface VibeCreatorProps {
   open?: boolean;
@@ -93,6 +97,8 @@ const VibeCreator: React.FC<VibeCreatorProps> = ({
   onOpenChange = () => {},
   onSubmit = () => {},
 }) => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("mood");
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -150,6 +156,8 @@ const VibeCreator: React.FC<VibeCreatorProps> = ({
   const [selectedVisualFilters, setSelectedVisualFilters] = useState<string[]>(
     [],
   );
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Refs
   const webcamRef = useRef<Webcam | null>(null);
@@ -567,42 +575,141 @@ const VibeCreator: React.FC<VibeCreatorProps> = ({
     );
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     // If we have volume controls showing, finalize the audio first
     if (showVolumeControls) {
       finalizeAudioCombination();
     }
 
     if (selectedMood) {
-      const vibeData: VibeData = {
-        mood: selectedMood,
-        audio: audioFile,
-        audioBlob: audioBlob,
-        audioEffects: [], // To be implemented
-        soundLayers: selectedSoundLayers,
-        backgroundMusic: selectedBackgroundMusic,
-        spotifyTrack: selectedSpotifyTrack
-          ? {
-              id: selectedSpotifyTrack.id,
-              name: selectedSpotifyTrack.name,
-              artist: selectedSpotifyTrack.artists
-                .map((a) => a.name)
-                .join(", "),
-              imageUrl: selectedSpotifyTrack.album.images[0]?.url || "",
-              previewUrl: selectedSpotifyTrack.preview_url,
-              externalUrl: selectedSpotifyTrack.external_urls.spotify,
-              volume: spotifyAudioVolume,
-            }
-          : undefined,
-        visual: visualFile,
-        visualFilters: selectedVisualFilters,
-        tags,
-        caption,
-        combinedAudio: combinedAudioBlob,
-        userAudioVolume: userAudioVolume,
-      };
-      onSubmit(vibeData);
-      onOpenChange(false);
+      setIsSaving(true);
+      setSaveError(null);
+
+      try {
+        // Validate required fields
+        if (!audioFile && !audioBlob) {
+          throw new Error("Audio is required");
+        }
+
+        if (!visualFile) {
+          throw new Error("Visual is required");
+        }
+
+        // Upload audio file to Supabase storage if available
+        let audioUrl = "";
+        if (audioBlob) {
+          const audioFileName = `vibes/${user?.id || "anonymous"}/${Date.now()}-audio.wav`;
+          const { data: audioData, error: audioError } = await supabase.storage
+            .from("vibe-media")
+            .upload(audioFileName, audioBlob, {
+              contentType: "audio/wav",
+              upsert: true,
+            });
+
+          if (audioError)
+            throw new Error(`Error uploading audio: ${audioError.message}`);
+
+          // Get public URL for the audio file
+          const { data: audioUrlData } = supabase.storage
+            .from("vibe-media")
+            .getPublicUrl(audioFileName);
+
+          audioUrl = audioUrlData.publicUrl;
+        }
+
+        // Upload visual file to Supabase storage if available
+        let visualUrl = "";
+        if (visualFile) {
+          const visualFileName = `vibes/${user?.id || "anonymous"}/${Date.now()}-visual.${visualFile.name.split(".").pop()}`;
+          const { data: visualData, error: visualError } =
+            await supabase.storage
+              .from("vibe-media")
+              .upload(visualFileName, visualFile, {
+                contentType: visualFile.type,
+                upsert: true,
+              });
+
+          if (visualError)
+            throw new Error(`Error uploading visual: ${visualError.message}`);
+
+          // Get public URL for the visual file
+          const { data: visualUrlData } = supabase.storage
+            .from("vibe-media")
+            .getPublicUrl(visualFileName);
+
+          visualUrl = visualUrlData.publicUrl;
+        }
+
+        // Prepare vibe data for database
+        const vibeDataForDB = {
+          user_id: user?.id,
+          mood: selectedMood,
+          audio_url: audioUrl,
+          visual_url: visualUrl,
+          caption: caption,
+          tags: tags,
+          sound_layers: selectedSoundLayers,
+          visual_filters: selectedVisualFilters,
+          spotify_track_id: selectedSpotifyTrack?.id,
+          spotify_track_name: selectedSpotifyTrack?.name,
+          spotify_track_artist: selectedSpotifyTrack?.artists
+            ? selectedSpotifyTrack?.artists.map((a) => a.name).join(", ")
+            : "",
+          spotify_track_image_url:
+            selectedSpotifyTrack?.album?.images?.[0]?.url || "",
+          spotify_track_preview_url: selectedSpotifyTrack?.preview_url || "",
+          spotify_track_external_url:
+            selectedSpotifyTrack?.external_urls?.spotify || "",
+        };
+
+        // Save vibe data to database
+        const savedVibe = await vibeService.saveVibe(vibeDataForDB);
+        console.log("Vibe saved successfully:", savedVibe);
+
+        // Call the original onSubmit with the local vibe data
+        const vibeData: VibeData = {
+          mood: selectedMood,
+          audio: audioFile,
+          audioBlob: audioBlob,
+          audioEffects: [], // To be implemented
+          soundLayers: selectedSoundLayers,
+          backgroundMusic: selectedBackgroundMusic,
+          spotifyTrack: selectedSpotifyTrack
+            ? {
+                id: selectedSpotifyTrack.id,
+                name: selectedSpotifyTrack.name,
+                artist: selectedSpotifyTrack.artists
+                  ? selectedSpotifyTrack.artists.map((a) => a.name).join(", ")
+                  : "",
+                imageUrl: selectedSpotifyTrack.album?.images?.[0]?.url || "",
+                previewUrl: selectedSpotifyTrack.preview_url || null,
+                externalUrl: selectedSpotifyTrack.external_urls?.spotify || "",
+                volume: spotifyAudioVolume,
+              }
+            : undefined,
+          visual: visualFile,
+          visualFilters: selectedVisualFilters,
+          tags,
+          caption,
+          combinedAudio: combinedAudioBlob,
+          userAudioVolume: userAudioVolume,
+        };
+
+        onSubmit(vibeData);
+        onOpenChange(false);
+
+        // Navigate to home page after successful submission
+        navigate("/");
+      } catch (error) {
+        console.error("Error saving vibe:", error);
+        setSaveError(
+          error instanceof Error ? error.message : "Failed to save vibe",
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    } else {
+      setSaveError("Please select a mood");
     }
   };
 
@@ -1282,11 +1389,22 @@ const VibeCreator: React.FC<VibeCreatorProps> = ({
               </Button>
               <Button
                 onClick={handleSubmit}
-                disabled={!audioFile || !visualFile}
+                disabled={!audioFile || !visualFile || isSaving}
                 className="px-8"
               >
-                <Send className="h-4 w-4 mr-2" /> Post Vibe
+                {isSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4 mr-2" /> Post Vibe
+                  </>
+                )}
               </Button>
+              {saveError && (
+                <p className="text-red-500 text-sm mt-2">{saveError}</p>
+              )}
             </div>
           </TabsContent>
         </Tabs>

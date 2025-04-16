@@ -1,5 +1,5 @@
-// Simple authentication service for demo purposes
-// In a real application, this would connect to a backend service
+// Authentication service using Supabase
+import { supabase } from "./supabaseClient";
 
 export interface User {
   id: string;
@@ -18,19 +18,7 @@ export interface RegisterCredentials {
   name: string;
 }
 
-// Mock user database
-const MOCK_USERS: Record<string, { password: string; user: User }> = {
-  "user@example.com": {
-    password: "password123",
-    user: {
-      id: "1",
-      email: "user@example.com",
-      name: "Demo User",
-    },
-  },
-};
-
-// Store the current user in localStorage
+// Store the current user in localStorage for persistence between page refreshes
 const USER_STORAGE_KEY = "vybz_current_user";
 
 export const authService = {
@@ -39,7 +27,7 @@ export const authService = {
     return localStorage.getItem(USER_STORAGE_KEY) !== null;
   },
 
-  // Get current user
+  // Get current user from localStorage
   getCurrentUser: (): User | null => {
     const userJson = localStorage.getItem(USER_STORAGE_KEY);
     if (!userJson) return null;
@@ -51,61 +39,102 @@ export const authService = {
     }
   },
 
-  // Login user
+  // Login user with Supabase
   login: async ({ email, password }: LoginCredentials): Promise<User> => {
-    // Simulate API call delay
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-    const lowerEmail = email.toLowerCase();
-    const userRecord = MOCK_USERS[lowerEmail];
-
-    if (!userRecord || userRecord.password !== password) {
-      throw new Error("Invalid email or password");
+    if (error) {
+      throw new Error(error.message);
     }
 
-    // Store user in localStorage
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(userRecord.user));
+    if (!data.user) {
+      throw new Error("No user returned from authentication");
+    }
 
-    return userRecord.user;
+    // Get user profile data from the profiles table
+    const { data: profileData, error: profileError } = await supabase
+      .from("profiles")
+      .select("name")
+      .eq("id", data.user.id)
+      .single();
+
+    if (profileError) {
+      console.error("Error fetching user profile:", profileError);
+    }
+
+    // Create user object
+    const user: User = {
+      id: data.user.id,
+      email: data.user.email || "",
+      name: profileData?.name || data.user.email?.split("@")[0] || "User",
+    };
+
+    // Store user in localStorage
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+
+    return user;
   },
 
-  // Register new user
+  // Register new user with Supabase
   register: async ({
     email,
     password,
     name,
   }: RegisterCredentials): Promise<User> => {
-    // Simulate API call delay
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // Create new user in Supabase Auth
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+        },
+      },
+    });
 
-    const lowerEmail = email.toLowerCase();
-
-    // Check if user already exists
-    if (MOCK_USERS[lowerEmail]) {
-      throw new Error("User with this email already exists");
+    if (error) {
+      throw new Error(error.message);
     }
 
-    // Create new user
-    const newUser: User = {
-      id: `user_${Date.now()}`,
-      email: lowerEmail,
+    if (!data.user) {
+      throw new Error("No user returned from registration");
+    }
+
+    // Insert user profile data
+    const { error: profileError } = await supabase.from("profiles").insert([
+      {
+        id: data.user.id,
+        name,
+        email,
+      },
+    ]);
+
+    if (profileError) {
+      console.error("Error creating user profile:", profileError);
+    }
+
+    // Create user object
+    const user: User = {
+      id: data.user.id,
+      email: data.user.email || "",
       name,
     };
 
-    // Add to mock database
-    MOCK_USERS[lowerEmail] = {
-      password,
-      user: newUser,
-    };
-
     // Store user in localStorage
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(newUser));
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
 
-    return newUser;
+    return user;
   },
 
-  // Logout user
+  // Logout user from Supabase
   logout: async (): Promise<void> => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("Error during logout:", error);
+    }
     localStorage.removeItem(USER_STORAGE_KEY);
   },
 };

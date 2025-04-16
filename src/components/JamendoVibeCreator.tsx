@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "../services/supabaseClient";
+import { vibeService } from "../services/vibeService";
 import {
   Dialog,
   DialogContent,
@@ -299,31 +301,93 @@ const JamendoVibeCreator: React.FC<JamendoVibeCreatorProps> = ({
     );
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (selectedMood) {
-      const vibeData: VibeData = {
-        mood: selectedMood,
-        soundLayers: selectedSoundLayers,
-        backgroundMusic: selectedBackgroundMusic,
-        jamendoTrack: selectedJamendoTrack
-          ? {
-              id: selectedJamendoTrack.id,
-              name: selectedJamendoTrack.name,
-              artist: selectedJamendoTrack.artist_name,
-              imageUrl: selectedJamendoTrack.image,
-              audioUrl: selectedJamendoTrack.audio,
-              externalUrl: selectedJamendoTrack.shareurl,
-              volume: jamendoAudioVolume,
-            }
-          : undefined,
-        visual: visualFile,
-        visualFilters: selectedVisualFilters,
-        tags,
-        caption,
-        text: vibeText,
-      };
-      onSubmit(vibeData);
-      onOpenChange(false);
+      try {
+        // Validate required fields
+        if (!visualFile) {
+          throw new Error("Visual is required");
+        }
+
+        // Upload visual file to Supabase storage
+        let visualUrl = "";
+        if (visualFile) {
+          const visualFileName = `vibes/jamendo/${Date.now()}-visual.${visualFile.name.split(".").pop()}`;
+          const { data: visualData, error: visualError } =
+            await supabase.storage
+              .from("vibe-media")
+              .upload(visualFileName, visualFile, {
+                contentType: visualFile.type,
+                upsert: true,
+              });
+
+          if (visualError) {
+            throw new Error(`Error uploading visual: ${visualError.message}`);
+          }
+
+          // Get public URL for the visual file
+          const { data: visualUrlData } = supabase.storage
+            .from("vibe-media")
+            .getPublicUrl(visualFileName);
+
+          visualUrl = visualUrlData.publicUrl;
+        }
+
+        // Prepare vibe data for database
+        const vibeDataForDB = {
+          mood: selectedMood,
+          visual_url: visualUrl,
+          caption: caption,
+          tags: tags,
+          sound_layers: selectedSoundLayers,
+          visual_filters: selectedVisualFilters,
+          jamendo_track_id: selectedJamendoTrack?.id,
+          jamendo_track_name: selectedJamendoTrack?.name,
+          jamendo_track_artist: selectedJamendoTrack?.artist_name,
+          jamendo_track_image_url: selectedJamendoTrack?.image,
+          jamendo_track_audio_url: selectedJamendoTrack?.audio,
+          jamendo_track_external_url: selectedJamendoTrack?.shareurl,
+          text: vibeText,
+        };
+
+        // Save vibe data to database
+        const savedVibe = await vibeService.saveVibe(vibeDataForDB);
+        console.log("Jamendo vibe saved successfully:", savedVibe);
+
+        // Call the original onSubmit with the local vibe data
+        const vibeData: VibeData = {
+          mood: selectedMood,
+          soundLayers: selectedSoundLayers,
+          backgroundMusic: selectedBackgroundMusic,
+          jamendoTrack: selectedJamendoTrack
+            ? {
+                id: selectedJamendoTrack.id,
+                name: selectedJamendoTrack.name,
+                artist: selectedJamendoTrack.artist_name,
+                imageUrl: selectedJamendoTrack.image,
+                audioUrl: selectedJamendoTrack.audio,
+                externalUrl: selectedJamendoTrack.shareurl,
+                volume: jamendoAudioVolume,
+              }
+            : undefined,
+          visual: visualFile,
+          visualFilters: selectedVisualFilters,
+          tags,
+          caption,
+          text: vibeText,
+        };
+
+        onSubmit(vibeData);
+        onOpenChange(false);
+
+        // Navigate to home page after successful submission
+        navigate("/");
+      } catch (error) {
+        console.error("Error saving vibe:", error);
+        alert(error instanceof Error ? error.message : "Failed to save vibe");
+      }
+    } else {
+      alert("Please select a mood");
     }
   };
 

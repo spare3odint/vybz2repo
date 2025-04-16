@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { Slider } from "./ui/slider";
 import { RefreshCcw, Filter, Volume2 } from "lucide-react";
+import { vibeService, VibeData } from "../services/vibeService";
 
 interface Vibe {
   id: string;
@@ -17,38 +18,9 @@ interface Vibe {
 }
 
 const VibeFeed = () => {
-  const [vibes, setVibes] = useState<Vibe[]>([
-    {
-      id: "1",
-      visual:
-        "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800&q=80",
-      audio: "/path/to/audio1.mp3",
-      mood: "lonely but hopeful",
-      tags: ["nostalgia", "rainy day"],
-      duration: 22,
-      createdAt: "2023-09-15T12:00:00Z",
-    },
-    {
-      id: "2",
-      visual:
-        "https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=800&q=80",
-      audio: "/path/to/audio2.mp3",
-      mood: "chaotic energy",
-      tags: ["villain era", "midnight thoughts"],
-      duration: 18,
-      createdAt: "2023-09-16T14:30:00Z",
-    },
-    {
-      id: "3",
-      visual:
-        "https://images.unsplash.com/photo-1494548162494-384bba4ab999?w=800&q=80",
-      audio: "/path/to/audio3.mp3",
-      mood: "zen mode",
-      tags: ["chill", "sunset vibes"],
-      duration: 25,
-      createdAt: "2023-09-17T09:15:00Z",
-    },
-  ]);
+  const [vibes, setVibes] = useState<Vibe[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [currentMood, setCurrentMood] = useState<string>("all");
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -66,6 +38,20 @@ const VibeFeed = () => {
         return "bg-gradient-to-br from-teal-500 via-blue-400 to-cyan-300";
       default:
         return "bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900";
+    }
+  };
+
+  // Get glow color based on mood
+  const getMoodColor = (mood: string) => {
+    switch (mood) {
+      case "lonely but hopeful":
+        return "rgba(79, 70, 229, 0.6)";
+      case "chaotic energy":
+        return "rgba(239, 68, 68, 0.6)";
+      case "zen mode":
+        return "rgba(20, 184, 166, 0.6)";
+      default:
+        return "rgba(138, 43, 226, 0.6)";
     }
   };
 
@@ -99,6 +85,38 @@ const VibeFeed = () => {
   const handleVolumeChange = (value: number[]) => {
     setVolume(value[0]);
   };
+
+  // Fetch vibes from the database
+  useEffect(() => {
+    const fetchVibes = async () => {
+      try {
+        setLoading(true);
+        const dbVibes = await vibeService.getAllVibes();
+
+        // Transform the database vibes to match the Vibe interface
+        const transformedVibes: Vibe[] = dbVibes.map((dbVibe) => ({
+          id: dbVibe.id || String(Math.random()),
+          visual:
+            dbVibe.visual_url ||
+            "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800&q=80",
+          audio: dbVibe.audio_url || "",
+          mood: dbVibe.mood,
+          tags: dbVibe.tags || [],
+          duration: 20, // Default duration
+          createdAt: dbVibe.created_at || new Date().toISOString(),
+        }));
+
+        setVibes(transformedVibes);
+      } catch (err) {
+        console.error("Error fetching vibes:", err);
+        setError("Failed to load vibes. Please try again later.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVibes();
+  }, []);
 
   // Get filtered vibes based on current mood
   const filteredVibes =
@@ -220,7 +238,29 @@ const VibeFeed = () => {
       {/* Main vibe card container */}
       <div className="relative z-10 w-full h-full flex items-center justify-center px-4 py-8">
         <AnimatePresence mode="wait">
-          {filteredVibes.length > 0 ? (
+          {loading ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-white text-center p-8 bg-black/20 backdrop-blur-md rounded-xl"
+            >
+              <p className="text-xl">Loading vibes...</p>
+            </motion.div>
+          ) : error ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-white text-center p-8 bg-black/20 backdrop-blur-md rounded-xl"
+            >
+              <p className="text-xl text-red-400">{error}</p>
+              <Button
+                onClick={() => window.location.reload()}
+                className="mt-4 bg-white/20 hover:bg-white/30"
+              >
+                Try Again
+              </Button>
+            </motion.div>
+          ) : filteredVibes.length > 0 ? (
             <motion.div
               key={filteredVibes[currentIndex].id}
               initial={{ opacity: 0, scale: 0.9 }}
@@ -240,7 +280,16 @@ const VibeFeed = () => {
                 }
               }}
             >
-              <VibeCard vibe={filteredVibes[currentIndex]} volume={volume} />
+              <VibeCard
+                id={filteredVibes[currentIndex].id}
+                visualSrc={filteredVibes[currentIndex].visual}
+                audioSrc={filteredVibes[currentIndex].audio}
+                moodTags={filteredVibes[currentIndex].tags}
+                glowColor={getMoodColor(filteredVibes[currentIndex].mood)}
+                createdAt={new Date(
+                  filteredVibes[currentIndex].createdAt,
+                ).toLocaleString()}
+              />
             </motion.div>
           ) : (
             <motion.div
@@ -259,13 +308,51 @@ const VibeFeed = () => {
 
       {/* Navigation dots */}
       <div className="relative z-10 w-full flex justify-center gap-2 pb-6">
-        {filteredVibes.map((_, index) => (
-          <button
-            key={index}
-            className={`w-2 h-2 rounded-full transition-all ${index === currentIndex ? "bg-white w-4" : "bg-white/50"}`}
-            onClick={() => setCurrentIndex(index)}
-          />
-        ))}
+        {!loading &&
+          !error &&
+          filteredVibes.map((_, index) => (
+            <button
+              key={index}
+              className={`w-2 h-2 rounded-full transition-all ${index === currentIndex ? "bg-white w-4" : "bg-white/50"}`}
+              onClick={() => setCurrentIndex(index)}
+            />
+          ))}
+      </div>
+
+      {/* Refresh button */}
+      <div className="absolute bottom-4 right-4 z-20">
+        <Button
+          variant="outline"
+          size="icon"
+          className="bg-black/20 backdrop-blur-md border-none hover:bg-white/20"
+          onClick={async () => {
+            setLoading(true);
+            try {
+              const dbVibes = await vibeService.getAllVibes();
+              const transformedVibes: Vibe[] = dbVibes.map((dbVibe) => ({
+                id: dbVibe.id || String(Math.random()),
+                visual:
+                  dbVibe.visual_url ||
+                  "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800&q=80",
+                audio: dbVibe.audio_url || "",
+                mood: dbVibe.mood,
+                tags: dbVibe.tags || [],
+                duration: 20,
+                createdAt: dbVibe.created_at || new Date().toISOString(),
+              }));
+              setVibes(transformedVibes);
+              setCurrentIndex(0);
+              setError(null);
+            } catch (err) {
+              console.error("Error refreshing vibes:", err);
+              setError("Failed to refresh vibes. Please try again.");
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          <RefreshCcw className="h-4 w-4" />
+        </Button>
       </div>
     </div>
   );
