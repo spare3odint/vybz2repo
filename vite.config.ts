@@ -10,11 +10,24 @@ export default defineConfig({
       ? "/"
       : process.env.VITE_BASE_PATH || "/",
   optimizeDeps: {
-    entries: ["src/main.tsx", "src/tempobook/**/*"],
+    // Limit entries to reduce initial scan size
+    entries: ["src/main.tsx"],
     include: ["react", "react-dom", "react-router-dom"],
+    // Disable dependency discovery in node_modules
+    disabled: false,
+    // Reduce esbuild memory usage
+    esbuildOptions: {
+      logLevel: "error",
+      logLimit: 0,
+      treeShaking: true,
+    },
   },
   build: {
-    sourcemap: true,
+    // Disable sourcemap in development to save memory
+    sourcemap: process.env.NODE_ENV === "production",
+    // Optimize build process
+    minify: "esbuild",
+    cssMinify: "lightningcss",
     rollupOptions: {
       output: {
         manualChunks: {
@@ -42,5 +55,14 @@ export default defineConfig({
   server: {
     // @ts-ignore
     allowedHosts: true,
+    // Reduce memory usage with hmr options
+    hmr: {
+      overlay: false,
+    },
+    // Limit watch to essential files
+    watch: {
+      usePolling: false,
+      ignored: ["**/node_modules/**", "**/dist/**"],
+    },
   },
 });
